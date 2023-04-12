@@ -1,124 +1,81 @@
-# 請勿更動此區塊程式碼
-
-import time
-import numpy as np
 import pandas as pd
+import numpy as np
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+from sklearn.model_selection import KFold, cross_val_score
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.impute import KNNImputer
 
-EXECUTION_START_TIME = time.time() # 計算執行時間
+# 讀取資料
+train_df = pd.read_csv('train.csv')
+test_df = pd.read_csv('test.csv')
 
-df = pd.read_csv('train.csv')      # 讀取資料，請勿更改路徑
+# 將 train 和 test 資料集合併，方便資料預處理
+data_df = pd.concat([train_df, test_df], ignore_index=True)
 
-# 資料分析與前處理
+# 將 'Name', 'Ticket', 'Cabin' 這三個特徵刪除，因為這些特徵對於生存預測沒有幫助
+data_df.drop(['Name', 'Ticket', 'Cabin'], axis=1, inplace=True)
 
-train_x = df[['Sex', 'Age']]                   # 取出訓練資料需要分析的資料欄位
-train_y = df['Survived']                       # 取出訓練資料的答案
+# 用中位數填補 'Age' 特徵的缺失值
+imputer = KNNImputer(n_neighbors=5)
+data_df['Age'] = imputer.fit_transform(data_df[['Age']])
+data_df['Fare'] = imputer.fit_transform(data_df[['Fare']])
 
-from sklearn.impute import SimpleImputer       # 匯入填補缺失值的工具
-from sklearn.preprocessing import LabelEncoder # 匯入 Label Encoder
+# 用最常出現的值填補 'Embarked' 特徵的缺失值
+most_frequent = data_df['Embarked'].mode()[0]
+data_df['Embarked'].fillna(most_frequent, inplace=True)
 
-imputer = SimpleImputer(strategy='median')     # 創造 imputer 並設定填補策略
-age = train_x['Age'].to_numpy().reshape(-1, 1)
-imputer.fit(age)                               # 根據資料學習需要填補的值
-train_x['Age'] = imputer.transform(age)        # 填補缺失值
+# 將 'Sex' 特徵用 LabelEncoder 轉換成數值特徵
+label_encoder = LabelEncoder()
+data_df['Sex'] = label_encoder.fit_transform(data_df['Sex'])
 
-le = LabelEncoder()                            # 創造 Label Encoder
-le.fit(train_x['Sex'])                         # 給予每個類別一個數值
-train_x['Sex'] = le.transform(train_x['Sex'])  # 轉換所有類別成為數值
+# 將 'Embarked' 特徵用 OneHotEncoder 轉換成數值特徵
+onehot_encoder = OneHotEncoder()
+embarked_onehot = onehot_encoder.fit_transform(data_df[['Embarked']]).toarray()
+data_df[['Embarked_C', 'Embarked_Q', 'Embarked_S']] = embarked_onehot
 
-# 模型訓練
+# 將 'Pclass' 特徵用 OneHotEncoder 轉換成數值特徵
+pclass_onehot = onehot_encoder.fit_transform(data_df[['Pclass']]).toarray()
+data_df[['Pclass_1', 'Pclass_2', 'Pclass_3']] = pclass_onehot
 
-from sklearn.model_selection import KFold             # 匯入 K 次交叉驗證工具
-from sklearn.tree import DecisionTreeClassifier       # 匯入決策樹模型
-from sklearn.metrics import accuracy_score            # 匯入準確度計算工具
+# 將資料集切成訓練集和測試集
+train_data = data_df.iloc[:len(train_df)]
+test_data = data_df.iloc[len(train_df):]
 
-kf = KFold(n_splits=5,                                # 設定 K 值
-           random_state=1012,
-           shuffle=True)
-kf.get_n_splits(train_x)                              # 給予資料範圍
+train_data['FamilySize'] = train_data['SibSp'] + train_data['Parch'] + 1
+test_data['FamilySize'] = test_data['SibSp'] + test_data['Parch'] + 1
 
-train_acc_list = []                                   # 儲存每次訓練模型的準確度
-valid_acc_list = []                                   # 儲存每次驗證模型的準確度
+# 定義要使用的特徵欄位
+features = ['Sex', 'Age', 'Fare', 'Embarked_C', 'Embarked_Q', 'Embarked_S', 'Pclass_1', 'Pclass_2', 'Pclass_3', 'SibSp', 'Parch', 'FamilySize']
 
-for train_index, valid_index in kf.split(train_x):    # 每個迴圈都會產生不同部份的資料
-    train_x_split = train_x.iloc[train_index]         # 產生訓練資料
-    train_y_split = train_y.iloc[train_index]         # 產生訓練資料標籤
-    valid_x_split = train_x.iloc[valid_index]         # 產生驗證資料
-    valid_y_split = train_y.iloc[valid_index]         # 產生驗證資料標籤
-    
-    model = DecisionTreeClassifier(random_state=1012) # 創造決策樹模型
-    model.fit(train_x_split, train_y_split)           # 訓練決策樹模型
-    
-    train_pred_y = model.predict(train_x_split)       # 確認模型是否訓練成功
-    train_acc = accuracy_score(train_y_split,         # 計算訓練資料準確度
-                               train_pred_y)
-    valid_pred_y = model.predict(valid_x_split)       # 驗證模型是否訓練成功
-    valid_acc = accuracy_score(valid_y_split,         # 計算驗證資料準確度
-                               valid_pred_y)
-    
-    train_acc_list.append(train_acc)
-    valid_acc_list.append(valid_acc)
+# # 建立模型
+# decision_tree = DecisionTreeClassifier(max_depth=5, random_state=4002)
 
-print((
-    'average train accuracy: {}\n' +
-    '    min train accuracy: {}\n' +
-    '    max train accuracy: {}\n' +
-    'average valid accuracy: {}\n' +
-    '    min valid accuracy: {}\n' +
-    '    max valid accuracy: {}').format(
-    np.mean(train_acc_list),                          # 輸出平均訓練準確度
-    np.min(train_acc_list),                           # 輸出最低訓練準確度
-    np.max(train_acc_list),                           # 輸出最高訓練準確度
-    np.mean(valid_acc_list),                          # 輸出平均驗證準確度
-    np.min(valid_acc_list),                           # 輸出最低驗證準確度
-    np.max(valid_acc_list)                            # 輸出最高驗證準確度
-))
+# 分割資料集，使用 K-fold cross validation 評估模型
 
-df = pd.read_csv('test.csv')      # 讀取資料，請勿更改路徑
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+# scores = cross_val_score(decision_tree, train_data[features], train_df['Survived'], cv=kf)
 
-# 資料分析與前處理
+from sklearn.ensemble import RandomForestClassifier
 
-test_x = df[['Sex', 'Age']]                   # 取出訓練資料需要分析的資料欄位
+random_forest = RandomForestClassifier(n_estimators=5100, max_depth=5, random_state=42)
+scores = cross_val_score(random_forest, train_data[features], train_df['Survived'], cv=kf)
 
-from sklearn.impute import SimpleImputer       # 匯入填補缺失值的工具
-from sklearn.preprocessing import LabelEncoder # 匯入 Label Encoder
+print('Cross-validation scores:', scores)
+print('Mean:', scores.mean())
+print('Standard deviation:', scores.std())
 
-imputer = SimpleImputer(strategy='median')     # 創造 imputer 並設定填補策略
-age = test_x['Age'].to_numpy().reshape(-1, 1)
-imputer.fit(age)                               # 根據資料學習需要填補的值
-test_x['Age'] = imputer.transform(age)        # 填補缺失值
+# 訓練模型
+# decision_tree.fit(train_data[features], train_df['Survived'])
+random_forest.fit(train_data[features], train_df['Survived'])
 
-le = LabelEncoder()                            # 創造 Label Encoder
-le.fit(test_x['Sex'])                         # 給予每個類別一個數值
-test_x['Sex'] = le.transform(test_x['Sex'])  # 轉換所有類別成為數值
+# 在測試集上進行預測
+# predictions = decision_tree.predict(test_data[features])
+predictions = random_forest.predict(test_data[features])
 
+# 將預測結果轉換成 DataFrame 格式
+submission_df = pd.DataFrame({'PassengerId': test_df['PassengerId'], 'Survived': predictions})
 
-# 模型訓練
-
-from sklearn.model_selection import KFold             # 匯入 K 次交叉驗證工具
-from sklearn.tree import DecisionTreeClassifier       # 匯入決策樹模型
-from sklearn.metrics import accuracy_score            # 匯入準確度計算工具
-
-kf = KFold(n_splits=5,                                # 設定 K 值
-           random_state=1012,
-           shuffle=True)
-kf.get_n_splits(train_x)                              # 給予資料範圍
-
-test_pred_y = model.predict(test_x)
-
-# 讀id
-test_passenger_ids = df['PassengerId']
-
-# 將預測結果轉為 DataFrame
-submission_df = pd.DataFrame({
-    'PassengerId': test_passenger_ids,
-    'Survived': test_pred_y
-})
-
-# 將 DataFrame 寫入 CSV 檔案
+# 將預測結果儲存成 csv 檔案
 submission_df.to_csv('submission.csv', index=False)
 
-
-# 請勿更動此區塊程式碼
-
-EXECUTION_END_TIME = time.time() # 計算執行時間
-print('total execution time: {}'.format(EXECUTION_END_TIME - EXECUTION_START_TIME))
